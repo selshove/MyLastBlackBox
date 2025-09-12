@@ -4,6 +4,28 @@ from flask import Flask, Response, render_template_string, send_file
 import threading, io, time
 from PIL import Image
 import numpy as np
+import cv2
+import serial
+import time
+import curses
+
+
+# get the curses screen window
+screen = curses.initscr()
+
+# turn off input echoing
+curses.noecho()
+
+# respond to keys immediately (don't wait for enter)
+curses.cbreak()
+
+# map arrow keys to special values
+screen.keypad(True)
+
+# Configure serial port
+ser = serial.Serial()
+ser.baudrate = 115200
+ser.port = '/dev/ttyUSB0'
 
 # --- Camera setup ---
 picam2 = Picamera2()
@@ -22,12 +44,45 @@ def capture_loop():
     global latest_jpeg, running
     while running:
         # Grab frame as numpy array (RGB888)
-        frame = picam2.capture_array()[:,:,::-1]
+        #frame = picam2.capture_array()[:,:,::-1]
+        rgb_frame = picam2.capture_array()
+        frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
+
 
         #################################################
         ### HERE WE CAN DO RANDOM STUFF TO THE FRAME  ###
         #################################################
+        det = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
 
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            
+        rects = det.detectMultiScale(gray, 
+            scaleFactor=1.1, 
+            minNeighbors=5, 
+            minSize=(50, 50), # adjust to your image size, maybe smaller, maybe larger?
+            flags=cv2.CASCADE_SCALE_IMAGE)
+
+        
+        frame_h, frame_w = frame.shape[:2]
+        f_center = (frame_w // 2, frame_h // 2)
+        cv2.circle(frame, f_center, 8, (255, 0, 0), -1)  # blue dot
+
+        for (x, y, w, h) in rects:
+            # x: x location
+            # y: y location
+            # w: width of the rectangle 
+            # h: height of the rectangle
+            # Remember, order in images: [y, x, channel]
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 10)
+
+            rx = x + (w//2)
+            ry = y + (h//2)
+            r_center = (rx, ry)
+            cv2.circle(frame, r_center, 8, (0, 0, 255), -1)  # red dot
+
+
+
+            cv2.line(frame, f_center, r_center, (0, 165, 255), 3)  # orange line
 
 
         

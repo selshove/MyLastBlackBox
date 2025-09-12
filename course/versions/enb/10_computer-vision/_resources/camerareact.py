@@ -4,6 +4,33 @@ from flask import Flask, Response, render_template_string, send_file
 import threading, io, time
 from PIL import Image
 import numpy as np
+import cv2
+import serial
+import time
+import curses
+
+
+# get the curses screen window
+screen = curses.initscr()
+
+# turn off input echoing
+curses.noecho()
+
+# respond to keys immediately (don't wait for enter)
+curses.cbreak()
+
+# map arrow keys to special values
+screen.keypad(True)
+
+# Configure serial port
+ser = serial.Serial()
+ser.baudrate = 115200
+ser.port = '/dev/ttyUSB0'
+
+# Open serial port
+ser.open()
+time.sleep(2.00) # Wait for connection before sending any data
+
 
 # --- Camera setup ---
 picam2 = Picamera2()
@@ -19,19 +46,108 @@ cv = threading.Condition()
 running = True
 
 def capture_loop():
-    global latest_jpeg, running
+    global latest_jpeg, running, last_command, last_command_time
+    last_command = None
+    last_command_time = 0
+    command_delay = 0.1  # 100 ms between commands
+    
     while running:
         # Grab frame as numpy array (RGB888)
-        frame = picam2.capture_array()[:,:,::-1]
+        #frame = picam2.capture_array()[:,:,::-1]
+        rgb_frame = picam2.capture_array()
+        frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
+
 
         #################################################
         ### HERE WE CAN DO RANDOM STUFF TO THE FRAME  ###
         #################################################
+        det = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
 
-
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            
+        rects = det.detectMultiScale(gray, 
+            scaleFactor=1.1, 
+            minNeighbors=5, 
+            minSize=(50, 50), # adjust to your image size, maybe smaller, maybe larger?
+            flags=cv2.CASCADE_SCALE_IMAGE)
 
         
+        frame_h, frame_w = frame.shape[:2]
+        f_center = (frame_w // 2, frame_h // 2)
+        cv2.circle(frame, f_center, 8, (255, 0, 0), -1)  # blue dot
 
+        for (x, y, w, h) in rects:
+            # x: x location
+            # y: y location
+            # w: width of the rectangle 
+            # h: height of the rectangle
+            # Remember, order in images: [y, x, channel]
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 10)
+
+            rx = x + (w//2)
+            ry = y + (h//2)
+            r_center = (rx, ry)
+            cv2.circle(frame, r_center, 8, (0, 0, 255), -1)  # red dot
+
+            cv2.line(frame, f_center, r_center, (0, 165, 255), 3)  # orange line
+
+
+            # Decide direction
+            dy = ry - f_center[1]
+            dx = rx - f_center[0]
+
+            direction = None
+            threshold = 30  # deadzone to avoid micro-movements
+
+            if abs(dx) > abs(dy):
+                if dx > threshold:
+                    direction = 'r'  # face is right of center
+                elif dx < -threshold:
+                    direction = 'l'  # face is left of center
+            else:
+                if dy < -threshold:
+                    direction = 'f'  # face is above center
+                elif dy > threshold:
+                    direction = 'x'  # face is below center, stop
+
+            # Send command only if changed and delay passed
+            now = time.time()
+            if direction and direction != last_command and now - last_command_time > command_delay:
+                ser.write(direction.encode())
+                last_command = direction
+                last_command_time = now
+
+
+            # try:
+            #     while True:
+            #         char = screen.getch()   
+            #         if char == ord('q'):
+            #             break
+            #         elif char == ord('x'):
+            #             screen.addstr(0, 0, 'STOP ')
+            #             ser.write(b'x')
+            #             time.sleep(0.05)
+            #         elif frame_h > ry:
+            #             screen.addstr(0, 0, 'right')
+            #             ser.write(b'r')
+            #             time.sleep(0.05)
+            #         elif ry > frame_h:
+            #             screen.addstr(0, 0, 'left ')       
+            #             ser.write(b'l')
+            #             time.sleep(0.05)
+            #         elif ry == frame_h:
+            #             screen.addstr(0, 0, 'up   ')       
+            #             ser.write(b'f')
+            #             time.sleep(0.05)
+            #         # elif char == curses.KEY_DOWN:
+            #         #     screen.addstr(0, 0, 'down ')
+            #         #     ser.write(b'b')
+            #         #     time.sleep(0.05)
+            # finally:
+            #     # shut down
+            #     curses.nocbreak(); screen.keypad(0); curses.echo()
+            #     curses.endwin()
+            #     ser.close()
 
 
 
