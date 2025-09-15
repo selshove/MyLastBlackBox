@@ -8,28 +8,36 @@ import cv2
 import serial
 import time
 import curses
+import os
+
+os.environ["PYTHONWARNINGS"] = "ignore"
+os.environ["ALSA_CARD"] = "default"
+
+from Raspberry_pi.detect_cat_call_and_face import detect_whistling_thread, whistle_detected
 
 
 # get the curses screen window
-screen = curses.initscr()
+#screen = curses.initscr()
 
 # turn off input echoing
-curses.noecho()
+#curses.noecho()
 
 # respond to keys immediately (don't wait for enter)
-curses.cbreak()
+#curses.cbreak()
 
 # map arrow keys to special values
-screen.keypad(True)
+#screen.keypad(True)
 
 # Configure serial port
 ser = serial.Serial()
 ser.baudrate = 115200
 ser.port = '/dev/ttyUSB0'
+try:
+    ser.open()
+except Exception as e:
+    print("[Serial] Could not open serial port:", e)
+time.sleep(2)
 
-# Open serial port
-ser.open()
-time.sleep(2.00) # Wait for connection before sending any data
 
 
 # --- Camera setup ---
@@ -83,67 +91,53 @@ def capture_loop():
 
         current_time = time.time()
 
-        if len(rects) > 0:
+        sound = detect_whistling_thread()
+
+        if len(rects) > 0 and sound:
             # Face detected
             last_seen_face_time = current_time  # update timestamp
 
             for (x, y, w, h) in rects:
 
-        
                 frame_h, frame_w = frame.shape[:2]
                 f_center = (frame_w // 2, frame_h // 2)
                 cv2.circle(frame, f_center, 8, (255, 0, 0), -1)  # blue dot
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 5)
 
-                for (x, y, w, h) in rects:
-                    # x: x location
-                    # y: y location
-                    # w: width of the rectangle 
-                    # h: height of the rectangle
-                    # Remember, order in images: [y, x, channel]
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 5)
+                rx = x + (w//2)
+                ry = y + (h//2)
+                r_center = (rx, ry)
+                cv2.circle(frame, r_center, 8, (0, 0, 255), -1)  # red dot
 
-                    rx = x + (w//2)
-                    ry = y + (h//2)
-                    r_center = (rx, ry)
-                    cv2.circle(frame, r_center, 8, (0, 0, 255), -1)  # red dot
+                cv2.line(frame, f_center, r_center, (0, 165, 255), 3)  # orange line
 
-                    cv2.line(frame, f_center, r_center, (0, 165, 255), 3)  # orange line
+                current_time = time.time()
+                if current_time - last_command_time > command_interval:
+                    if ry < frame_h // 2 - 50:
+                        if last_sent_command != 'f':
+                            ser.write(b'f')
+                            last_sent_command = 'f'
+                    elif rx > frame_w // 2 + 50:
+                        if last_sent_command != 'r':
+                            ser.write(b'r')
+                            last_sent_command = 'r'
+                    elif rx < frame_w // 2 - 50:
+                        if last_sent_command != 'l':
+                            ser.write(b'l')
+                            last_sent_command = 'l'
+                    else:
+                        if last_sent_command != 'x':
+                            ser.write(b'x')  # center aligned
+                            last_sent_command = 'x'
 
-
-                    # Decide direction
-                    dy = ry - f_center[1]
-                    dx = rx - f_center[0]
-
-                    # Calculate horizontal offset from center
-                    offset_x = rx - f_center[0]
-
-                    current_time = time.time()
-                    if current_time - last_command_time > command_interval:
-                        if ry < frame_h // 2 - 50:
-                            if last_sent_command != 'f':
-                                ser.write(b'f')
-                                last_sent_command = 'f'
-                        elif rx > frame_w // 2 + 50:
-                            if last_sent_command != 'r':
-                                ser.write(b'r')
-                                last_sent_command = 'r'
-                        elif rx < frame_w // 2 - 50:
-                            if last_sent_command != 'l':
-                                ser.write(b'l')
-                                last_sent_command = 'l'
-                        else:
-                            if last_sent_command != 'x':
-                                ser.write(b'x')  # center aligned
-                                last_sent_command = 'x'
-
-                        last_command_time = current_time
+                    last_command_time = current_time
 
         else:
-                        # No face detected
-                        if current_time - last_seen_face_time > face_timeout:
-                            if last_sent_command != 'x':
-                                ser.write(b'x')  # stop
-                                last_sent_command = 'x'
+            # No face detected
+            if current_time - last_seen_face_time > face_timeout:
+                if last_sent_command != 'x':
+                    ser.write(b'x')  # stop
+                    last_sent_command = 'x'
 
 
 
@@ -199,6 +193,10 @@ def capture_loop():
 
 t = threading.Thread(target=capture_loop, daemon=True)
 t.start()
+
+audio_thread = threading.Thread(target=detect_whistling_thread, daemon=True)
+audio_thread.start()
+
 
 # --- Web app ---
 app = Flask(__name__)

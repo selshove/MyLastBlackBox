@@ -37,7 +37,7 @@ if __name__ == '__main__':
     # Argparse the file path to the audio file containing the whistling
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('path', help='Path to the audio file')
+    parser.add_argument('path', heself.wavlp='Path to the audio file')
     args = parser.parse_args()
 
     # call the function
